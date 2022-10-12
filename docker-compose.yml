@@ -11,20 +11,32 @@ services:
         - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
     networks:
         - rabbitmq_nodejs
-  consumer:
-    build:
-      context: ./
-      target: dev
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "localhost", "5672" ]
+      timeout: 15s
+      retries: 1
+    logging:
+      driver: none
+
+
+  server:
+    build: ./server
     volumes:
-      - .:/src
-    depends_on:
-      - "rabbitmq"
-    command: sh -c '/bin/wait-for-it.sh rabbitmq:5672 --timeout=30 -- node consumer.js'
+      - ./server/src:/home/node/app/src
     environment:
       NODE_ENV: production
       AMQP_URL: amqp://guest:guest@rabbitmq:5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    links: 
+        - rabbitmq
     networks:
       - rabbitmq_nodejs
+    ports:
+      - 8080:3000
+    
 networks:
   rabbitmq_nodejs:
     driver: bridge
+
