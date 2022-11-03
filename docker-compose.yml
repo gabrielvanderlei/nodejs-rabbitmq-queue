@@ -34,7 +34,8 @@ services:
     networks:
       - rabbitmq_nodejs
     ports:
-      - 8080:3000
+      - 8081:3000
+      - 8080:8080
     
 networks:
   rabbitmq_nodejs:

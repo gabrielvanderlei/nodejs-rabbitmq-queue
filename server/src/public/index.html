@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RabbitMQ Chat</title>
+</head>
+<body>
+    <script>
+        let connection;
+        let requests = [];
+
+        let updateRequests = () => {
+            document.getElementById("requests").innerHTML = "";
+
+            let finalRequests = {}
+
+            requests.map(requestInfo => {
+                finalRequests[requestInfo.id] = requestInfo;
+            })
+            
+            requests.map(requestInfo => {
+                if(requestInfo.status == 'done'){
+                    delete finalRequests[requestInfo.id];
+                }
+            })
+
+            Object.values(finalRequests).map(requestInfo => {
+                let divItemRequest = document.createElement('div');
+                divItemRequest.innerHTML = "<b>" + requestInfo.id + "</b>: "  + requestInfo.data + " / " + requestInfo.status;
+                divItemRequest.style.padding = "5px";
+                
+                let buttonItemRequest = document.createElement('button');
+                buttonItemRequest.innerHTML = "Request Done"
+                
+                buttonItemRequest.onclick = () => {
+                    connection.send(JSON.stringify({ command: "REQUEST_DONE", msg: requestInfo }))
+                }
+
+                let divItem = document.createElement('div');
+                divItem.style.border = "1px solid black";
+                divItem.style.margin = "5px";
+                divItem.style.padding = "5px";
+
+                divItem.appendChild(buttonItemRequest)
+                divItem.appendChild(divItemRequest)
+
+                document.getElementById("requests").appendChild(divItem)
+            });
+        }
+
+        window.onload = () => {
+            // var connection = new WebSocket('ws://'+window.location.host+'/requests');
+            connection = new WebSocket('wss://8080-gabrielvand-nodejsrabit-w7hmunxcuo2.ws-us73.gitpod.io/requests');
+
+            connection.onopen = function () {
+                console.log('Connection open!');
+            }
+
+            connection.onclose = function () {
+                console.log('Connection closed');
+            }
+
+            connection.onmessage = function (e) {
+                var server_message = JSON.parse(e.data);
+                console.log(server_message)
+                requests.push(server_message)
+                updateRequests()
+            }
+            
+            document.getElementById('createRequest').onclick = () => {
+                connection.send(JSON.stringify({ command: "CREATE_REQUEST" }))
+            }
+        }
+
+    </script>
+    <h1>Requests</h1>
+    <button id="createRequest">Create Request</button>
+    <div id="requests"></div>
+</body>
+</html>

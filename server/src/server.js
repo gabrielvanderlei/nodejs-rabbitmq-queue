@@ -7,18 +7,19 @@ const cors = require('cors')
 const app = express()
 const path = require('path');
 
-app.use(express.json());
-app.use(cors());
+let pendingRequestChannel, doneRequestChannel, sendMessageChannel, connection, queue;
 
-let channel, connection, queue;
 let msgData = [];
+let index = 0;
+
+let wsList = [];
+let authorized = [];
 
 const wss = new WebSocketServer({
-    port: 8081,
+    port: 8080,
     path: '/requests'
 });
 
-let wsList = [];
 wss.on('connection', function (ws) {
     wsList.push(ws)
     
@@ -26,68 +27,97 @@ wss.on('connection', function (ws) {
         ws.send(msg)
     })
     
-    ws.on('message', function (message) {
-        console.log(message)
+    ws.on('message', async function (message) {
+        let completeMessage = JSON.parse(message.toString());
+        console.log(completeMessage)
+
+        if(completeMessage.command == 'CREATE_REQUEST'){
+            createPendingRequest();
+        }
+
+        if(completeMessage.command == 'REQUEST_DONE'){
+            createDoneRequest(completeMessage.msg)
+        }
     });
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+let createPendingRequest = async () => {
+    console.log("CREATING REQUEST")
+    const msg = {'id': Math.floor(Math.random() * 1000), 'data': 'Simple request'};
+    const queue = 'requests.pending';
+    await sendMessageChannel.sendToQueue(queue, Buffer.from(JSON.stringify(msg)));
+}
 
-app.get("/", (req, res) => {
-    let msgList = []
-    msgData.map((msg) => {
-        try {
-            var buf = Buffer.from(msg.content, 'ascii')
-            console.log(buf)
-            msgList.push(JSON.parse(buf))
-        } catch(e) {
-            console.log(e)
-        }
-    })
+let createDoneRequest = async (msg) => {
+    const queue = 'requests.done';
+    await sendMessageChannel.sendToQueue(queue, Buffer.from(JSON.stringify(msg)));
+}
 
-    res.send(msgList)
-})
+let readingPendingChannel = async () => {
+    queue = 'requests.pending';
+    pendingRequestChannel = await connection.createChannel();
+    pendingRequestChannel.prefetch(10);
 
+    await pendingRequestChannel.assertQueue(queue, {durable: true});
+    await pendingRequestChannel.consume(queue, async (msg) => {
+            let data = msg.content.toString();
+            data = JSON.stringify({ ...JSON.parse(data), status: 'pending' });
 
-app.get("/request", async (req, res) => {
-    const msg = {'id': Math.floor(Math.random() * 1000), 'email': 'user@domail.com', name: 'firstname lastname'};
-    const exchange = 'user.signed_up';
-    const routingKey = 'sign_up_email';
-    await channel.publish(exchange, routingKey, Buffer.from(JSON.stringify(msg)));
-
-    res.send({
-        message: 'OK'
-    })
-})
-
-app.listen(process.env.PORT || 3000, async () => {
-    console.log("App Listening")
-
-    connection = await amqplib.connect(amqpUrl, "heartbeat=60");
-    queue = 'user.sign_up_email';
-    
-    channel = await connection.createChannel();
-    channel.prefetch(10);
-    
-    process.once('SIGINT', async () => { 
-        console.log('got sigint, closing connection');
-        await channel.close();
-        await connection.close(); 
-        process.exit(0);
-    });
-    
-    await channel.assertQueue(queue, {durable: true});
-    await channel.consume(queue, async (msg) => {
-            console.log('processing messages');      
-            msgData.push(msg)
+            msgData.push(data)
+            
             wsList.map((ws) => {
-                ws.send(msg);
+                ws.send(data);
             })
-            await channel.ack(msg);
+            
+            await pendingRequestChannel.ack(msg);
         }, 
         {
             noAck: false,
-            consumerTag: 'email_consumer'
+            consumerTag: 'request_pending_consumer'
         }
     );
+}
+
+let readingDoneChannel = async () => {
+    queue = 'requests.done';
+    doneRequestChannel.prefetch(10);
+    
+    await doneRequestChannel.assertQueue(queue, {durable: true});
+    await doneRequestChannel.consume(queue, async (msg) => {
+            let data = msg.content.toString();
+            data = JSON.stringify({ ...JSON.parse(data), status: 'done' });
+            
+            msgData.push(data)
+            
+            wsList.map((ws) => {
+                ws.send(data);
+            })
+            
+            await doneRequestChannel.ack(msg);
+        }, 
+        {
+            noAck: false,
+            consumerTag: 'request_done_consumer'
+        }
+    );
+}
+
+(async () => {
+    connection = await amqplib.connect(amqpUrl, "heartbeat=60");
+    
+    pendingRequestChannel = await connection.createChannel();
+    doneRequestChannel = await connection.createChannel();
+    sendMessageChannel = await connection.createChannel();
+
+    console.log("STARTING CONSUMERS")
+    await readingPendingChannel();
+    await readingDoneChannel();
+})()
+
+app.use(express.json());
+app.use(cors());
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.listen(process.env.PORT || 3000, async () => {
+    console.log("App Listening")
 })
